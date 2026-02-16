@@ -1,0 +1,31 @@
+name: Repro hashFiles ignores outside workspace
+
+on:
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create files (inside + outside workspace)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "inside" > "$GITHUB_WORKSPACE/inside-ws.txt"
+          echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+
+      - name: Hash inside workspace (should be non-empty)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "inside hash: ${{ hashFiles('inside-ws.txt') }}"
+
+      - name: Hash outside workspace (currently empty => issue reproduced)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "outside hash: '${{ hashFiles(format('{0}/outside-ws.txt', runner.temp)) }}'"
