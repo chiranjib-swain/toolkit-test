@@ -30,7 +30,7 @@ jobs:
         working-directory: toolkit
         run: npx lerna bootstrap --ci
 
-      - name: Debug: check http-client dependency installation
+      - name: Debug- check http-client dependency installation
         working-directory: toolkit
         shell: bash
         run: |
