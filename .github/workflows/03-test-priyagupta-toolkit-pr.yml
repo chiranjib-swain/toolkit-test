@@ -1,0 +1,78 @@
+name: Priya Gupta toolkit branch (allowOutsideWorkspace)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout toolkit branch
+        uses: actions/checkout@v4
+        with:
+          repository: priyagupta108/toolkit
+          ref: hashFiles-extended-options
+          path: toolkit
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Lerna bootstrap (link local packages + install per-package deps)
+        working-directory: toolkit
+        run: npx lerna bootstrap --ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Test (Jest from root, glob only)
+        working-directory: toolkit
+        run: npx jest packages/glob --runInBand
+
+      - name: Functional check hashFiles outside GITHUB_WORKSPACE (opt-in)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+      
+          echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
+          ls -la "$RUNNER_TEMP/outside-ws.txt"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+      
+          cat > ./check-hash.mjs <<'EOF'
+          let glob;
+          try {
+            glob = await import('./packages/glob/lib/index.js');
+          } catch {
+            glob = await import('./packages/glob/lib/glob.js');
+          }
+      
+          const outsidePattern = process.env.RUNNER_TEMP + '/outside-ws.txt';
+      
+          // Default behavior (no opt-in): should be empty because it's outside GITHUB_WORKSPACE
+          const hDefault = await glob.hashFiles(outsidePattern, '');
+          console.log('default hash:', JSON.stringify(hDefault));
+      
+          // Opt-in behavior: should be non-empty
+          const hOptIn = await glob.hashFiles(outsidePattern, '', { allowOutsideWorkspace: true });
+          console.log('opt-in hash:', JSON.stringify(hOptIn));
+      
+          if (hDefault && hDefault.length > 0) {
+            throw new Error('Expected default hash to be empty when hashing outside GITHUB_WORKSPACE.');
+          }
+          if (!hOptIn || hOptIn.length === 0) {
+            throw new Error('Expected opt-in hash to be non-empty when allowOutsideWorkspace is true.');
+          }
+          EOF
+      
+          node ./check-hash.mjs
