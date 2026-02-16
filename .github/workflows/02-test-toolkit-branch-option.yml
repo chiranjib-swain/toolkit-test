@@ -1,0 +1,65 @@
+name: Test toolkit branch (allowOutsideWorkspace)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout toolkit branch
+        uses: actions/checkout@v4
+        with:
+          repository: chiranjib-swain/toolkit
+          ref: copilot/add-opt-in-flag-hashfiles
+          path: toolkit
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Run unit tests
+        working-directory: toolkit
+        run: npm test
+
+      - name: Functional check @actions/glob hashFiles outside workspace (default vs opt-in)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
+          echo "Created: $RUNNER_TEMP/outside-ws.txt"
+          ls -la "$RUNNER_TEMP/outside-ws.txt"
+
+          cat > /tmp/check-hash.mjs <<'EOF'
+          import * as glob from '@actions/glob';
+
+          const outsidePath = process.env.RUNNER_TEMP + '/outside-ws.txt';
+
+          const hDefault = await glob.hashFiles(outsidePath);
+          console.log('default hash:', JSON.stringify(hDefault));
+
+          const hOptIn = await glob.hashFiles(outsidePath, { allowOutsideWorkspace: true });
+          console.log('opt-in hash:', JSON.stringify(hOptIn));
+
+          if (hDefault && hDefault.length > 0) {
+            throw new Error('Expected default hash to be empty when hashing outside workspace.');
+          }
+          if (!hOptIn || hOptIn.length === 0) {
+            throw new Error('Expected opt-in hash to be non-empty when allowOutsideWorkspace is true.');
+          }
+          EOF
+
+          node /tmp/check-hash.mjs
