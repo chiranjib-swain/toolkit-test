@@ -46,7 +46,7 @@ jobs:
         working-directory: toolkit
         run: npm test
 
-      - name: Functional check: @actions/glob hashFiles outside workspace (default vs opt-in)
+      - name: Functional check @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
         shell: bash
         run: |
