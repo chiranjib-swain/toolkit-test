@@ -14,6 +14,19 @@ jobs:
           ref: copilot/add-opt-in-flag-hashfiles
           path: toolkit
           fetch-depth: 0
+          
+      - name: Diagnostics (toolkit build config)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Node: $(node -v || true)"
+          echo "npm:  $(npm -v || true)"
+          echo "Has package-lock?"; ls -la package-lock.json || true
+          echo "Has pnpm-lock?";  ls -la pnpm-lock.yaml || true
+          echo "Has yarn.lock?";  ls -la yarn.lock || true
+          echo "Root package.json (workspaces field):"
+          node -e "const p=require('./package.json'); console.log(p.workspaces || '(no workspaces)')"
 
       - name: Setup Node (prefer repo-pinned version)
         uses: actions/setup-node@v4
