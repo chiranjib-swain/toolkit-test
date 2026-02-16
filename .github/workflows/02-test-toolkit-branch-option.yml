@@ -30,13 +30,13 @@ jobs:
         working-directory: toolkit
         run: npx lerna bootstrap --ci
 
-      - name: Build (@actions/glob + dependencies)
+      - name: Build
         working-directory: toolkit
-        run: npx lerna run build --scope @actions/glob --include-dependencies
+        run: npm run build
 
-      - name: Test (@actions/glob only)
+      - name: Test (Jest from root, glob only)
         working-directory: toolkit
-        run: npx lerna run test --scope @actions/glob
+        run: npx jest packages/glob --runInBand
 
       - name: Functional check- @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
