@@ -38,41 +38,55 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check hashFiles outside GITHUB_WORKSPACE (opt-in)
+      - name: Functional check @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
-      
-          echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
-          ls -la "$RUNNER_TEMP/outside-ws.txt"
+
+          # Create a file outside GITHUB_WORKSPACE, under RUNNER_TEMP
+          mkdir -p "$RUNNER_TEMP/hashfiles-test/a" "$RUNNER_TEMP/hashfiles-test/outside"
+          echo "A" > "$RUNNER_TEMP/hashfiles-test/a/fileA.txt"
+          echo "OUT" > "$RUNNER_TEMP/hashfiles-test/outside/fileOut.txt"
+
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "RUNNER_TEMP=$RUNNER_TEMP"
-      
+          ls -la "$RUNNER_TEMP/hashfiles-test/a"
+          ls -la "$RUNNER_TEMP/hashfiles-test/outside"
+
+          # Show build output exists
+          echo "Contents of packages/glob/lib:"
+          ls -la packages/glob/lib
+
           cat > ./check-hash.mjs <<'EOF'
-          let glob;
-          try {
-            glob = await import('./packages/glob/lib/index.js');
-          } catch {
-            glob = await import('./packages/glob/lib/glob.js');
-          }
-      
-          const outsidePattern = process.env.RUNNER_TEMP + '/outside-ws.txt';
-      
-          // Default behavior (no opt-in): should be empty because it's outside GITHUB_WORKSPACE
-          const hDefault = await glob.hashFiles(outsidePattern, '');
+          // Import toolkit's locally-built glob implementation
+          const glob = await import('./packages/glob/lib/glob.js');
+
+          const base = process.env.RUNNER_TEMP + '/hashfiles-test';
+          const rootA = base + '/a';
+          const outside = base + '/outside';
+
+          // Hash BOTH rootA and outside (newline-separated patterns)
+          const patterns = `${rootA}/*\n${outside}/*`;
+
+          // Default behavior: should NOT hash outside of GITHUB_WORKSPACE (expect empty)
+          // We also set `roots:[rootA]` to mirror the PR's test intent.
+          const hDefault = await glob.hashFiles(patterns, '', { roots: [rootA] });
           console.log('default hash:', JSON.stringify(hDefault));
-      
-          // Opt-in behavior: should be non-empty
-          const hOptIn = await glob.hashFiles(outsidePattern, '', { allowOutsideWorkspace: true });
+
+          // Opt-in behavior in priyagupta108 PR: allowFilesOutsideWorkspace
+          const hOptIn = await glob.hashFiles(patterns, '', {
+            roots: [rootA],
+            allowFilesOutsideWorkspace: true
+          });
           console.log('opt-in hash:', JSON.stringify(hOptIn));
-      
+
           if (hDefault && hDefault.length > 0) {
-            throw new Error('Expected default hash to be empty when hashing outside GITHUB_WORKSPACE.');
+            throw new Error('Expected default hash to be empty when files are outside the allowed scope.');
           }
           if (!hOptIn || hOptIn.length === 0) {
-            throw new Error('Expected opt-in hash to be non-empty when allowOutsideWorkspace is true.');
+            throw new Error('Expected opt-in hash to be non-empty when allowFilesOutsideWorkspace is true.');
           }
           EOF
-      
+
           node ./check-hash.mjs
