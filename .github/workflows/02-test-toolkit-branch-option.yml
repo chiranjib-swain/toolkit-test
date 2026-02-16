@@ -30,34 +30,14 @@ jobs:
         working-directory: toolkit
         run: npx lerna bootstrap --ci
 
-      - name: Debug- check http-client dependency installation
+      - name: Verify key deps exist (http-client)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
-          echo "=== toolkit root ==="
-          ls -la
-
-          echo "=== packages/http-client ==="
-          ls -la packages/http-client || true
-
-          echo "=== packages/http-client/node_modules (if present) ==="
-          ls -la packages/http-client/node_modules || true
-
-          echo "=== check undici/tunnel folders (if present) ==="
-          ls -la packages/http-client/node_modules/undici || true
-          ls -la packages/http-client/node_modules/tunnel || true
-
-          echo "=== packages/http-client/package.json (top part) ==="
-          cat packages/http-client/package.json | sed -n '1,180p'
-
-      - name: Verify key deps resolve (from http-client package dir)
-        working-directory: toolkit
-        shell: bash
-        run: |
-          set -euo pipefail
-          node -e "require.resolve('undici', {paths: ['toolkit/packages/http-client']}); console.log('undici ok (http-client)')"
-          node -e "require.resolve('tunnel',  {paths: ['toolkit/packages/http-client']}); console.log('tunnel ok (http-client)')"
+          test -d packages/http-client/node_modules/undici
+          test -d packages/http-client/node_modules/tunnel
+          echo "undici + tunnel exist under packages/http-client/node_modules"
 
       - name: Build
         working-directory: toolkit
@@ -67,7 +47,7 @@ jobs:
         working-directory: toolkit
         run: npm test
 
-      - name: Functional check @actions/glob hashFiles outside workspace (default vs opt-in)
+      - name: Functional check- @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
         shell: bash
         run: |
@@ -81,11 +61,9 @@ jobs:
 
           const outsidePath = process.env.RUNNER_TEMP + '/outside-ws.txt';
 
-          // Default behavior: should ignore outside-workspace paths
           const hDefault = await glob.hashFiles(outsidePath);
           console.log('default hash:', JSON.stringify(hDefault));
 
-          // Opt-in behavior: should hash outside-workspace paths
           const hOptIn = await glob.hashFiles(outsidePath, { allowOutsideWorkspace: true });
           console.log('opt-in hash:', JSON.stringify(hOptIn));
 
