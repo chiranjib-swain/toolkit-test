@@ -38,13 +38,12 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check @actions/glob hashFiles outside workspace (default vs opt-in)
+      - name: Functional check @actions/glob hashFiles outside workspace (default throws, opt-in works)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
 
-          # Create a file outside GITHUB_WORKSPACE, under RUNNER_TEMP
           mkdir -p "$RUNNER_TEMP/hashfiles-test/a" "$RUNNER_TEMP/hashfiles-test/outside"
           echo "A" > "$RUNNER_TEMP/hashfiles-test/a/fileA.txt"
           echo "OUT" > "$RUNNER_TEMP/hashfiles-test/outside/fileOut.txt"
@@ -54,36 +53,33 @@ jobs:
           ls -la "$RUNNER_TEMP/hashfiles-test/a"
           ls -la "$RUNNER_TEMP/hashfiles-test/outside"
 
-          # Show build output exists
-          echo "Contents of packages/glob/lib:"
-          ls -la packages/glob/lib
-
           cat > ./check-hash.mjs <<'EOF'
-          // Import toolkit's locally-built glob implementation
           const glob = await import('./packages/glob/lib/glob.js');
 
           const base = process.env.RUNNER_TEMP + '/hashfiles-test';
           const rootA = base + '/a';
           const outside = base + '/outside';
-
-          // Hash BOTH rootA and outside (newline-separated patterns)
           const patterns = `${rootA}/*\n${outside}/*`;
 
-          // Default behavior: should NOT hash outside of GITHUB_WORKSPACE (expect empty)
-          // We also set `roots:[rootA]` to mirror the PR's test intent.
-          const hDefault = await glob.hashFiles(patterns, '', { roots: [rootA] });
-          console.log('default hash:', JSON.stringify(hDefault));
+          // Default should THROW (per this PR behavior)
+          let threw = false;
+          try {
+            await glob.hashFiles(patterns, '', { roots: [rootA] });
+          } catch (e) {
+            threw = true;
+            console.log('default threw as expected:', (e && e.message) ? e.message.split('\n')[0] : String(e));
+          }
+          if (!threw) {
+            throw new Error('Expected default hashFiles to throw for files outside workspace.');
+          }
 
-          // Opt-in behavior in priyagupta108 PR: allowFilesOutsideWorkspace
+          // Opt-in should produce a hash (non-empty)
           const hOptIn = await glob.hashFiles(patterns, '', {
             roots: [rootA],
             allowFilesOutsideWorkspace: true
           });
           console.log('opt-in hash:', JSON.stringify(hOptIn));
 
-          if (hDefault && hDefault.length > 0) {
-            throw new Error('Expected default hash to be empty when files are outside the allowed scope.');
-          }
           if (!hOptIn || hOptIn.length === 0) {
             throw new Error('Expected opt-in hash to be non-empty when allowFilesOutsideWorkspace is true.');
           }
