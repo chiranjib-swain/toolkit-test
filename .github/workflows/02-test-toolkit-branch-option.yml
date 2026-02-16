@@ -38,38 +38,37 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check local @actions/glob build (default vs opt-in)
+      - name: Functional check hashFiles outside GITHUB_WORKSPACE (opt-in)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
+      
           echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
           ls -la "$RUNNER_TEMP/outside-ws.txt"
-      
-          # Show what's in the built lib dir to help debugging if paths differ
-          echo "Contents of packages/glob/lib:"
-          ls -la packages/glob/lib || true
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
       
           cat > ./check-hash.mjs <<'EOF'
-          // Import from the local built output, not from node_modules
-          // Try index.js first (most common), fallback to glob.js if needed.
           let glob;
           try {
             glob = await import('./packages/glob/lib/index.js');
-          } catch (e) {
+          } catch {
             glob = await import('./packages/glob/lib/glob.js');
           }
       
-          const outsidePath = process.env.RUNNER_TEMP + '/outside-ws.txt';
+          const outsidePattern = process.env.RUNNER_TEMP + '/outside-ws.txt';
       
-          const hDefault = await glob.hashFiles(outsidePath);
+          // Default behavior (no opt-in): should be empty because it's outside GITHUB_WORKSPACE
+          const hDefault = await glob.hashFiles(outsidePattern, '');
           console.log('default hash:', JSON.stringify(hDefault));
       
-          const hOptIn = await glob.hashFiles(outsidePath, { allowOutsideWorkspace: true });
+          // Opt-in behavior: should be non-empty
+          const hOptIn = await glob.hashFiles(outsidePattern, '', { allowOutsideWorkspace: true });
           console.log('opt-in hash:', JSON.stringify(hOptIn));
       
           if (hDefault && hDefault.length > 0) {
-            throw new Error('Expected default hash to be empty when hashing outside workspace.');
+            throw new Error('Expected default hash to be empty when hashing outside GITHUB_WORKSPACE.');
           }
           if (!hOptIn || hOptIn.length === 0) {
             throw new Error('Expected opt-in hash to be non-empty when allowOutsideWorkspace is true.');
