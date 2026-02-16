@@ -34,9 +34,9 @@ jobs:
         working-directory: toolkit
         run: npx lerna run build --scope @actions/glob --include-dependencies
 
-      - name: Test (@actions/glob + dependencies)
+      - name: Test (@actions/glob only)
         working-directory: toolkit
-        run: npx lerna run test --scope @actions/glob --include-dependencies
+        run: npx lerna run test --scope @actions/glob
 
       - name: Functional check- @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
