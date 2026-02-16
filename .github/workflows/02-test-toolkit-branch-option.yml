@@ -30,22 +30,13 @@ jobs:
         working-directory: toolkit
         run: npx lerna bootstrap --ci
 
-      - name: Verify key deps exist (http-client)
+      - name: Build (@actions/glob + dependencies)
         working-directory: toolkit
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d packages/http-client/node_modules/undici
-          test -d packages/http-client/node_modules/tunnel
-          echo "undici + tunnel exist under packages/http-client/node_modules"
+        run: npx lerna run build --scope @actions/glob --include-dependencies
 
-      - name: Build
+      - name: Test (@actions/glob + dependencies)
         working-directory: toolkit
-        run: npm run build
-
-      - name: Run unit tests
-        working-directory: toolkit
-        run: npm test
+        run: npx lerna run test --scope @actions/glob --include-dependencies
 
       - name: Functional check- @actions/glob hashFiles outside workspace (default vs opt-in)
         working-directory: toolkit
@@ -53,10 +44,9 @@ jobs:
         run: |
           set -euo pipefail
           echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
-          echo "Created: $RUNNER_TEMP/outside-ws.txt"
           ls -la "$RUNNER_TEMP/outside-ws.txt"
 
-          cat > /tmp/check-hash.mjs <<'EOF'
+          cat > ./check-hash.mjs <<'EOF'
           import * as glob from '@actions/glob';
 
           const outsidePath = process.env.RUNNER_TEMP + '/outside-ws.txt';
@@ -75,4 +65,4 @@ jobs:
           }
           EOF
 
-          node /tmp/check-hash.mjs
+          node ./check-hash.mjs
