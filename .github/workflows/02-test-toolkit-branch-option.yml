@@ -13,17 +13,18 @@ jobs:
           repository: chiranjib-swain/toolkit
           ref: copilot/add-opt-in-flag-hashfiles
           path: toolkit
+          fetch-depth: 0
 
-      - name: Setup Node
+      - name: Setup Node (prefer repo-pinned version)
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: toolkit/package-lock.json
 
-      - name: Install dependencies
+      - name: Install dependencies (workspaces-friendly)
         working-directory: toolkit
-        run: npm ci
+        run: npm install
 
       - name: Build
         working-directory: toolkit
@@ -38,10 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           echo "outside" > "$RUNNER_TEMP/outside-ws.txt"
-          echo "Created: $RUNNER_TEMP/outside-ws.txt"
-          ls -la "$RUNNER_TEMP/outside-ws.txt"
 
           cat > /tmp/check-hash.mjs <<'EOF'
           import * as glob from '@actions/glob';
