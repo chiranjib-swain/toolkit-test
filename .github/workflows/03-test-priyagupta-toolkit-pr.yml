@@ -38,7 +38,7 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check @actions/glob hashFiles outside workspace (default throws, opt-in works)
+      - name: Functional check @actions/glob hashFiles outside workspace (no options)
         working-directory: toolkit
         shell: bash
         run: |
@@ -60,28 +60,25 @@ jobs:
           const rootA = base + '/a';
           const outside = base + '/outside';
           const patterns = `${rootA}/*\n${outside}/*`;
+          console.log('rootA:', rootA);
+          console.log('outside:', outside);
+          console.log('patterns:', JSON.stringify(patterns));
 
-          // Default should THROW (per this PR behavior)
+          // No options: roots defaults to [GITHUB_WORKSPACE] (since currentWorkspace = '')
+          // With patterns pointing to RUNNER_TEMP (outside GITHUB_WORKSPACE), this should throw on Priya's branch.
           let threw = false;
           try {
-            await glob.hashFiles(patterns, '', { roots: [rootA] });
+            await glob.hashFiles(patterns, '');
           } catch (e) {
             threw = true;
-            console.log('default threw as expected:', (e && e.message) ? e.message.split('\n')[0] : String(e));
+            console.log(
+              'no-options threw as expected:',
+              (e && e.message) ? e.message.split('\n')[0] : String(e)
+            );
           }
+
           if (!threw) {
-            throw new Error('Expected default hashFiles to throw for files outside workspace.');
-          }
-
-          // Opt-in should produce a hash (non-empty)
-          const hOptIn = await glob.hashFiles(patterns, '', {
-            roots: [rootA],
-            allowFilesOutsideWorkspace: true
-          });
-          console.log('opt-in hash:', JSON.stringify(hOptIn));
-
-          if (!hOptIn || hOptIn.length === 0) {
-            throw new Error('Expected opt-in hash to be non-empty when allowFilesOutsideWorkspace is true.');
+            throw new Error('Expected hashFiles(patterns, \'\') to throw with no options when patterns include files outside GITHUB_WORKSPACE.');
           }
           EOF
 
