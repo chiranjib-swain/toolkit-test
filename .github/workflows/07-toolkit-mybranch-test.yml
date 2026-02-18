@@ -40,63 +40,65 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check isInResolvedRoots edge case (resolvedFile === root)
+      - name: Functional check- exclude **/node_modules/** (structure-only test)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
 
-          mkdir -p "$RUNNER_TEMP/hashfiles-root-eq"
-          echo "ROOTFILE" > "$RUNNER_TEMP/hashfiles-root-eq/rootfile.txt"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "GITHUB_ACTION_PATH=${GITHUB_ACTION_PATH:-"(not set)"}"
 
-          echo "RUNNER_TEMP=$RUNNER_TEMP"
-          ls -la "$RUNNER_TEMP/hashfiles-root-eq"
+          if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
+            export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
+          fi
 
-          cat > ./check-root-eq.mjs <<'EOF'
+          mkdir -p "$GITHUB_WORKSPACE/hashfiles-exclude-nm/node_modules/pkg"
+          mkdir -p "$GITHUB_WORKSPACE/hashfiles-exclude-nm/src"
+          mkdir -p "$GITHUB_ACTION_PATH/hashfiles-exclude-nm/node_modules/pkg"
+
+          echo '{"where":"workspace-src"}' > "$GITHUB_WORKSPACE/hashfiles-exclude-nm/src/included.json"
+          echo '{"where":"workspace-node_modules"}' > "$GITHUB_WORKSPACE/hashfiles-exclude-nm/node_modules/pkg/excluded.json"
+          echo '{"where":"action-node_modules"}' > "$GITHUB_ACTION_PATH/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json"
+
+          echo "Workspace tree:"
+          find "$GITHUB_WORKSPACE/hashfiles-exclude-nm" -maxdepth 4 -type f -print | sort
+          echo "Action path tree:"
+          find "$GITHUB_ACTION_PATH/hashfiles-exclude-nm" -maxdepth 4 -type f -print | sort
+
+          cat > ./check-exclude-node-modules.mjs <<'EOF'
+          import { writeFileSync } from 'fs';
           const glob = await import('./packages/glob/lib/glob.js');
-          const fs = await import('fs');
 
-          const dirRoot = process.env.RUNNER_TEMP + '/hashfiles-root-eq';
-          const fileAtRoot = dirRoot + '/rootfile.txt';
+          const patterns = '**/*.json';
 
-          console.log('dirRoot:', dirRoot);
-          console.log('fileAtRoot:', fileAtRoot);
+          // Same structure as the docs example (note: **/node_modules/** may NOT be supported by current exclude impl)
+          const opts = {
+            roots: [process.env.GITHUB_WORKSPACE, process.env.GITHUB_ACTION_PATH],
+            allowFilesOutsideWorkspace: true,
+            exclude: ['**/node_modules/**']
+          };
 
-          const patterns = fileAtRoot;
-          const roots = [fileAtRoot];
+          const h1 = await glob.hashFiles(patterns, '', opts);
+          console.log('h1:', JSON.stringify(h1));
 
-          console.log('patterns:', JSON.stringify(patterns));
-          console.log('roots:', JSON.stringify(roots));
+          // Change a JSON file under node_modules; if exclude works as a real glob, hash should NOT change.
+          const nmFile = process.env.GITHUB_WORKSPACE + '/hashfiles-exclude-nm/node_modules/pkg/excluded.json';
+          writeFileSync(nmFile, '{"where":"workspace-node_modules","v":2}\n');
 
-          // Print the effective values that will be used under the hood:
-          // resolvedFile = realpathSync(file match)
-          // resolvedRoots = roots.map(realpathSync)
-          let resolvedFile;
-          let resolvedRoots;
-          try {
-            resolvedFile = fs.realpathSync(fileAtRoot);
-            resolvedRoots = roots.map(r => fs.realpathSync(r));
-            console.log('resolvedFile:', resolvedFile);
-            console.log('resolvedRoots:', JSON.stringify(resolvedRoots));
-          } catch (e) {
-            console.log('realpathSync failed:', e?.message ?? String(e));
-          }
+          const h2 = await glob.hashFiles(patterns, '', opts);
+          console.log('h2:', JSON.stringify(h2));
 
-          let threw = false;
-          try {
-            await glob.hashFiles(patterns, '', { roots });
-          } catch (e) {
-            threw = true;
-                        console.log(
-              'threw (expected with current startsWith(root+sep) logic):\n' +
-              ((e && e.message) ? e.message : String(e))
-            );
-          }
-
-          if (!threw) {
+          if (h1 !== h2) {
             throw new Error(
-              'Expected hashFiles to treat resolvedFile===root as outside with current startsWith(root+sep) implementation; if this did not throw, behavior has changed (good) or matching was normalized.'
+              "Hash changed after modifying a node_modules JSON file; exclude:['**/node_modules/**'] did not exclude it (or exclude doesn't support full globs)."
             );
+          }
+
+          console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
+          EOF
+
+          node ./check-exclude-node-modules.mjs
           }
           EOF
 
