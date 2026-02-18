@@ -40,7 +40,7 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check- isInResolvedRoots edge case (resolvedFile === root)
+      - name: Functional check isInResolvedRoots edge case (resolvedFile === root)
         working-directory: toolkit
         shell: bash
         run: |
@@ -54,6 +54,7 @@ jobs:
 
           cat > ./check-root-eq.mjs <<'EOF'
           const glob = await import('./packages/glob/lib/glob.js');
+          const fs = await import('fs');
 
           const dirRoot = process.env.RUNNER_TEMP + '/hashfiles-root-eq';
           const fileAtRoot = dirRoot + '/rootfile.txt';
@@ -61,13 +62,25 @@ jobs:
           console.log('dirRoot:', dirRoot);
           console.log('fileAtRoot:', fileAtRoot);
 
-          // Edge case: configure roots as the *file path* itself, so resolvedFile === root.
-          // With startsWith(root + sep) this will NOT match, so the file is treated as outside roots.
           const patterns = fileAtRoot;
           const roots = [fileAtRoot];
 
           console.log('patterns:', JSON.stringify(patterns));
           console.log('roots:', JSON.stringify(roots));
+
+          // Print the effective values that will be used under the hood:
+          // resolvedFile = realpathSync(file match)
+          // resolvedRoots = roots.map(realpathSync)
+          let resolvedFile;
+          let resolvedRoots;
+          try {
+            resolvedFile = fs.realpathSync(fileAtRoot);
+            resolvedRoots = roots.map(r => fs.realpathSync(r));
+            console.log('resolvedFile:', resolvedFile);
+            console.log('resolvedRoots:', JSON.stringify(resolvedRoots));
+          } catch (e) {
+            console.log('realpathSync failed:', e?.message ?? String(e));
+          }
 
           let threw = false;
           try {
