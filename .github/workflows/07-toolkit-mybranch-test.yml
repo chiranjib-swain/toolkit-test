@@ -1,0 +1,103 @@
+name: MY own branch Test 
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout toolkit (main)
+        uses: actions/checkout@v4
+        with:
+          repository: chiranjib-swain/toolkit
+          ref: hashfiles-outside-test
+          path: toolkit
+          fetch-depth: 0
+
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Lerna bootstrap (link local packages + install per-package deps)
+        working-directory: toolkit
+        run: npx lerna bootstrap --ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Test (Jest from root, glob only)
+        working-directory: toolkit
+        run: npx jest packages/glob --runInBand
+
+      - name: Functional check isInResolvedRoots edge case (resolvedFile === root)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/hashfiles-root-eq"
+          echo "ROOTFILE" > "$RUNNER_TEMP/hashfiles-root-eq/rootfile.txt"
+
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          ls -la "$RUNNER_TEMP/hashfiles-root-eq"
+
+          cat > ./check-root-eq.mjs <<'EOF'
+          const glob = await import('./packages/glob/lib/glob.js');
+          const fs = await import('fs');
+
+          const dirRoot = process.env.RUNNER_TEMP + '/hashfiles-root-eq';
+          const fileAtRoot = dirRoot + '/rootfile.txt';
+
+          console.log('dirRoot:', dirRoot);
+          console.log('fileAtRoot:', fileAtRoot);
+
+          const patterns = fileAtRoot;
+          const roots = [fileAtRoot];
+
+          console.log('patterns:', JSON.stringify(patterns));
+          console.log('roots:', JSON.stringify(roots));
+
+          // Print the effective values that will be used under the hood:
+          // resolvedFile = realpathSync(file match)
+          // resolvedRoots = roots.map(realpathSync)
+          let resolvedFile;
+          let resolvedRoots;
+          try {
+            resolvedFile = fs.realpathSync(fileAtRoot);
+            resolvedRoots = roots.map(r => fs.realpathSync(r));
+            console.log('resolvedFile:', resolvedFile);
+            console.log('resolvedRoots:', JSON.stringify(resolvedRoots));
+          } catch (e) {
+            console.log('realpathSync failed:', e?.message ?? String(e));
+          }
+
+          let threw = false;
+          try {
+            await glob.hashFiles(patterns, '', { roots });
+          } catch (e) {
+            threw = true;
+                        console.log(
+              'threw (expected with current startsWith(root+sep) logic):\n' +
+              ((e && e.message) ? e.message : String(e))
+            );
+          }
+
+          if (!threw) {
+            throw new Error(
+              'Expected hashFiles to treat resolvedFile===root as outside with current startsWith(root+sep) implementation; if this did not throw, behavior has changed (good) or matching was normalized.'
+            );
+          }
+          EOF
+
+          node ./check-root-eq.mjs
