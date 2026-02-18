@@ -80,6 +80,3 @@ jobs:
           EOF
 
           node ./check-root-eq.mjs
-          EOF
-
-          node ./check-hash-main.mjs
