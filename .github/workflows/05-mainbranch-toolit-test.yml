@@ -1,0 +1,75 @@
+name: toolkit-branch-optin
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout toolkit (main)
+        uses: actions/checkout@v4
+        with:
+          repository: actions/toolkit
+          ref: main
+          path: toolkit
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+
+      - name: Build @actions/glob
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build --workspaces --if-present
+
+      - name: Functional check @actions/glob hashFiles outside workspace (main branch skips, no throw)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/hashfiles-test/a" "$RUNNER_TEMP/hashfiles-test/outside"
+          echo "A" > "$RUNNER_TEMP/hashfiles-test/a/fileA.txt"
+          echo "OUT" > "$RUNNER_TEMP/hashfiles-test/outside/fileOut.txt"
+
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          ls -la "$RUNNER_TEMP/hashfiles-test/a"
+          ls -la "$RUNNER_TEMP/hashfiles-test/outside"
+
+          cat > ./check-hash-main.mjs <<'EOF'
+          const glob = await import('./packages/glob/lib/glob.js');
+
+          const base = process.env.RUNNER_TEMP + '/hashfiles-test';
+          const rootA = base + '/a';
+          const outside = base + '/outside';
+          const patterns = `${rootA}/*\n${outside}/*`;
+
+          console.log('base:', base);
+          console.log('rootA:', rootA);
+          console.log('outside:', outside);
+          console.log('patterns:', JSON.stringify(patterns));
+
+          // Main branch behavior: outside-workspace matches are skipped, no throw.
+          const h = await glob.hashFiles(patterns, '');
+          console.log('hash:', JSON.stringify(h));
+
+          if (h !== '') {
+            throw new Error(`Expected empty hash on main when patterns are outside GITHUB_WORKSPACE, got: ${h}`);
+          }
+          EOF
+
+          node ./check-hash-main.mjs
