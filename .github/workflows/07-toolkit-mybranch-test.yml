@@ -40,7 +40,7 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-      - name: Functional check- exclude **/node_modules/** (structure-only test)
+      - name: Functional check exclude **/node_modules/** (scoped + deterministic)
         working-directory: toolkit
         shell: bash
         run: |
@@ -53,28 +53,37 @@ jobs:
             export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
           fi
 
-          mkdir -p "$GITHUB_WORKSPACE/hashfiles-exclude-nm/node_modules/pkg"
-          mkdir -p "$GITHUB_WORKSPACE/hashfiles-exclude-nm/src"
-          mkdir -p "$GITHUB_ACTION_PATH/hashfiles-exclude-nm/node_modules/pkg"
+          TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-nm"
+          TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-nm"
 
-          echo '{"where":"workspace-src"}' > "$GITHUB_WORKSPACE/hashfiles-exclude-nm/src/included.json"
-          echo '{"where":"workspace-node_modules"}' > "$GITHUB_WORKSPACE/hashfiles-exclude-nm/node_modules/pkg/excluded.json"
-          echo '{"where":"action-node_modules"}' > "$GITHUB_ACTION_PATH/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json"
+          rm -rf "$TEST_DIR_WS" "$TEST_DIR_AP"
+          mkdir -p "$TEST_DIR_WS/node_modules/pkg" "$TEST_DIR_WS/src" "$TEST_DIR_AP/node_modules/pkg"
+
+          echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
+          echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
+          echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
 
           echo "Workspace tree:"
-          find "$GITHUB_WORKSPACE/hashfiles-exclude-nm" -maxdepth 4 -type f -print | sort
+          find "$TEST_DIR_WS" -type f -print | sort
           echo "Action path tree:"
-          find "$GITHUB_ACTION_PATH/hashfiles-exclude-nm" -maxdepth 4 -type f -print | sort
+          find "$TEST_DIR_AP" -type f -print | sort
 
-          cat > ./check-exclude-node-modules.mjs <<'EOF'
+          cat > ./check-exclude-node-modules.mjs <<'EOF_NODE'
           import { writeFileSync } from 'fs';
           const glob = await import('./packages/glob/lib/glob.js');
 
-          const patterns = '**/*.json';
+          const ws = process.env.GITHUB_WORKSPACE;
+          const ap = process.env.GITHUB_ACTION_PATH;
 
-          // Same structure as the docs example (note: **/node_modules/** may NOT be supported by current exclude impl)
+          // Scope patterns to our test dir to avoid hashing the whole repository.
+          const patterns = [
+            `${ws}/hashfiles-exclude-nm/**/*.json`,
+            `${ap}/hashfiles-exclude-nm/**/*.json`
+          ].join('\n');
+
+          // Keep the same *options structure* you requested (exclude contains **/node_modules/**)
           const opts = {
-            roots: [process.env.GITHUB_WORKSPACE, process.env.GITHUB_ACTION_PATH],
+            roots: [ws, ap],
             allowFilesOutsideWorkspace: true,
             exclude: ['**/node_modules/**']
           };
@@ -82,8 +91,8 @@ jobs:
           const h1 = await glob.hashFiles(patterns, '', opts);
           console.log('h1:', JSON.stringify(h1));
 
-          // Change a JSON file under node_modules; if exclude works as a real glob, hash should NOT change.
-          const nmFile = process.env.GITHUB_WORKSPACE + '/hashfiles-exclude-nm/node_modules/pkg/excluded.json';
+          // Mutate a JSON file under node_modules; if exclude works as a real glob, hash should NOT change.
+          const nmFile = `${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`;
           writeFileSync(nmFile, '{"where":"workspace-node_modules","v":2}\n');
 
           const h2 = await glob.hashFiles(patterns, '', opts);
@@ -96,10 +105,6 @@ jobs:
           }
 
           console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
-          EOF
+          EOF_NODE
 
           node ./check-exclude-node-modules.mjs
-          }
-          EOF
-
-          node ./check-root-eq.mjs
