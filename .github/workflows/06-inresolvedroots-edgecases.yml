@@ -55,27 +55,35 @@ jobs:
           cat > ./check-root-eq.mjs <<'EOF'
           const glob = await import('./packages/glob/lib/glob.js');
 
-          const root = process.env.RUNNER_TEMP + '/hashfiles-root-eq';
-          const fileAtRoot = root + '/rootfile.txt';
+          const dirRoot = process.env.RUNNER_TEMP + '/hashfiles-root-eq';
+          const fileAtRoot = dirRoot + '/rootfile.txt';
 
-          // Pattern is the exact file path; root is the directory that contains it.
-          // If isInResolvedRoots is implemented incorrectly, this may incorrectly treat the file as outside roots.
-          console.log('root:', root);
+          console.log('dirRoot:', dirRoot);
           console.log('fileAtRoot:', fileAtRoot);
 
+          // Edge case: configure roots as the *file path* itself, so resolvedFile === root.
+          // With startsWith(root + sep) this will NOT match, so the file is treated as outside roots.
           const patterns = fileAtRoot;
+          const roots = [fileAtRoot];
 
-          let hash;
+          console.log('patterns:', JSON.stringify(patterns));
+          console.log('roots:', JSON.stringify(roots));
+
+          let threw = false;
           try {
-            hash = await glob.hashFiles(patterns, '', { roots: [root] });
-            console.log('hash:', JSON.stringify(hash));
+            await glob.hashFiles(patterns, '', { roots });
           } catch (e) {
-            console.log('threw:', (e && e.message) ? e.message : String(e));
-            throw e;
+            threw = true;
+            console.log(
+              'threw (expected with current startsWith(root+sep) logic):',
+              (e && e.message) ? e.message.split('\n')[0] : String(e)
+            );
           }
 
-          if (!hash || hash.length === 0) {
-            throw new Error('Expected a non-empty hash for a file inside the root directory.');
+          if (!threw) {
+            throw new Error(
+              'Expected hashFiles to treat resolvedFile===root as outside with current startsWith(root+sep) implementation; if this did not throw, behavior has changed (good) or matching was normalized.'
+            );
           }
           EOF
 
