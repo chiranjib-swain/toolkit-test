@@ -87,9 +87,9 @@ jobs:
             await glob.hashFiles(patterns, '', { roots });
           } catch (e) {
             threw = true;
-            console.log(
-              'threw (expected with current startsWith(root+sep) logic):',
-              (e && e.message) ? e.message.split('\n')[0] : String(e)
+                        console.log(
+              'threw (expected with current startsWith(root+sep) logic):\n' +
+              ((e && e.message) ? e.message : String(e))
             );
           }
 
