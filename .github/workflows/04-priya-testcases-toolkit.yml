@@ -1,0 +1,88 @@
+name: Test Cases with Priya's Branch
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout toolkit branch
+        uses: actions/checkout@v4
+        with:
+          repository: priyagupta108/toolkit
+          ref: hashFiles-extended-options
+          path: toolkit
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Lerna bootstrap (link local packages + install per-package deps)
+        working-directory: toolkit
+        run: npx lerna bootstrap --ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Test (Jest from root, glob only)
+        working-directory: toolkit
+        run: npx jest packages/glob --runInBand
+
+      - name: Functional check @actions/glob hashFiles outside workspace (default throws, opt-in works)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$RUNNER_TEMP/hashfiles-test/a" "$RUNNER_TEMP/hashfiles-test/outside"
+          echo "A" > "$RUNNER_TEMP/hashfiles-test/a/fileA.txt"
+          echo "OUT" > "$RUNNER_TEMP/hashfiles-test/outside/fileOut.txt"
+
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+          ls -la "$RUNNER_TEMP/hashfiles-test/a"
+          ls -la "$RUNNER_TEMP/hashfiles-test/outside"
+
+          cat > ./check-hash.mjs <<'EOF'
+          const glob = await import('./packages/glob/lib/glob.js');
+
+          const base = process.env.RUNNER_TEMP + '/hashfiles-test';
+          const rootA = base + '/a';
+          const outside = base + '/outside';
+          const patterns = `${rootA}/*\n${outside}/*`;
+
+          // Default should THROW (per this PR behavior)
+          let threw = false;
+          try {
+            await glob.hashFiles(patterns, '',/* no options */);
+          } catch (e) {
+            threw = true;
+            console.log('default threw as expected:', (e && e.message) ? e.message.split('\n')[0] : String(e));
+          }
+          if (!threw) {
+            throw new Error('Expected default hashFiles to throw for files outside workspace.');
+          }
+
+          // Opt-in should produce a hash (non-empty)
+          const hOptIn = await glob.hashFiles(patterns, '', {
+            roots: [rootA],
+            allowFilesOutsideWorkspace: true
+          });
+          console.log('opt-in hash:', JSON.stringify(hOptIn));
+
+          if (!hOptIn || hOptIn.length === 0) {
+            throw new Error('Expected opt-in hash to be non-empty when allowFilesOutsideWorkspace is true.');
+          }
+          EOF
+
+          node ./check-hash.mjs
