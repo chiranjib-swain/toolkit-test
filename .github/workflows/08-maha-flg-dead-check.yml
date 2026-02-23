@@ -1,0 +1,131 @@
+name: Mahabaleswar-01 startsWith(workspace+sep) vs realpath boundary (symlink + equality)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout toolkit (main)
+        uses: actions/checkout@v4
+        with:
+          repository: mahabaleshwars/toolkit
+          ref: enhancement/1035
+          path: toolkit
+          fetch-depth: 0
+
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Lerna bootstrap (link local packages + install per-package deps)
+        working-directory: toolkit
+        run: npx lerna bootstrap --ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Test (Jest from root, glob only)
+        working-directory: toolkit
+        run: npx jest packages/glob --runInBand
+
+      - name: Functional check startsWith(workspace+sep) vs realpath boundary (symlink + equality)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+
+          ROOT="$RUNNER_TEMP/ws-boundary"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/real/sub"
+          echo "HELLO" > "$ROOT/real/sub/file.txt"
+
+          # Create a symlink path pointing to the same real directory
+          ln -s "$ROOT/real" "$ROOT/link"
+
+          # Paths
+          REAL_WS="$ROOT/real"
+          LINK_WS="$ROOT/link"
+          FILE_VIA_LINK="$ROOT/link/sub/file.txt"
+          WS_AS_FILE="$ROOT/real/sub/file.txt" # equality case when "workspace" is actually a file path
+
+          echo "REAL_WS=$REAL_WS"
+          echo "LINK_WS=$LINK_WS"
+          echo "FILE_VIA_LINK=$FILE_VIA_LINK"
+          echo "WS_AS_FILE=$WS_AS_FILE"
+          ls -la "$ROOT"
+          ls -la "$ROOT/real"
+          ls -la "$ROOT/link"
+
+          cat > ./check-ws-boundary.mjs <<'EOF'
+          import * as fs from 'fs';
+          import * as path from 'path';
+
+          function startsWithGuard(file, workspace) {
+            return file.startsWith(`${workspace}${path.sep}`);
+          }
+
+          function realpathGuard(file, workspace) {
+            const rf = fs.realpathSync(file);
+            const rw = fs.realpathSync(workspace);
+            return rf === rw || rf.startsWith(rw + path.sep);
+          }
+
+          const REAL_WS = process.env.REAL_WS;
+          const LINK_WS = process.env.LINK_WS;
+          const FILE_VIA_LINK = process.env.FILE_VIA_LINK;
+          const WS_AS_FILE = process.env.WS_AS_FILE;
+
+          console.log('--- Case A: symlink mismatch (workspace is symlink, file is symlink path) ---');
+          console.log('workspace (symlink):', LINK_WS);
+          console.log('file (via symlink):', FILE_VIA_LINK);
+          console.log('startsWithGuard:', startsWithGuard(FILE_VIA_LINK, LINK_WS));
+          console.log('realpathGuard:', realpathGuard(FILE_VIA_LINK, LINK_WS));
+
+          console.log('--- Case B: symlink mismatch (workspace is real, file is symlink path) ---');
+          console.log('workspace (real):', REAL_WS);
+          console.log('file (via symlink):', FILE_VIA_LINK);
+          console.log('startsWithGuard:', startsWithGuard(FILE_VIA_LINK, REAL_WS));
+          console.log('realpathGuard:', realpathGuard(FILE_VIA_LINK, REAL_WS));
+
+          console.log('--- Case C: equality edge (workspace is a file path) ---');
+          console.log('workspace (file):', WS_AS_FILE);
+          console.log('file (same):', WS_AS_FILE);
+          console.log('startsWithGuard:', startsWithGuard(WS_AS_FILE, WS_AS_FILE));
+          console.log('realpathGuard:', realpathGuard(WS_AS_FILE, WS_AS_FILE));
+
+          // Assertions demonstrating why realpath/equality check is safer:
+          // Case B is the key: file is within workspace *logically* but startsWith fails due to symlink vs realpath.
+          if (startsWithGuard(FILE_VIA_LINK, REAL_WS) !== false) {
+            throw new Error('Expected startsWithGuard to be false in Case B (symlink path vs real workspace).');
+          }
+          if (realpathGuard(FILE_VIA_LINK, REAL_WS) !== true) {
+            throw new Error('Expected realpathGuard to be true in Case B (realpath boundary should allow it).');
+          }
+
+          // Equality edge: startsWith guard fails; realpath guard succeeds.
+          if (startsWithGuard(WS_AS_FILE, WS_AS_FILE) !== false) {
+            throw new Error('Expected startsWithGuard to be false for equality edge (file===workspace).');
+          }
+          if (realpathGuard(WS_AS_FILE, WS_AS_FILE) !== true) {
+            throw new Error('Expected realpathGuard to be true for equality edge (file===workspace).');
+          }
+
+          console.log('OK: demonstrated startsWith-only guard failures and realpath boundary fix.');
+          EOF
+
+          REAL_WS="$REAL_WS" LINK_WS="$LINK_WS" FILE_VIA_LINK="$FILE_VIA_LINK" WS_AS_FILE="$WS_AS_FILE" \
+            node ./check-ws-boundary.mjs
