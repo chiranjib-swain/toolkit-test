@@ -1,4 +1,4 @@
-name: Exclude Pattern Check 
+name: Exclude Pattern Check
 
 on:
   workflow_dispatch:
@@ -50,45 +50,66 @@ jobs:
           if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
             export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
           fi
+      
           TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-nm"
           TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-nm"
           rm -rf "$TEST_DIR_WS" "$TEST_DIR_AP"
           mkdir -p "$TEST_DIR_WS/node_modules/pkg" "$TEST_DIR_WS/src" "$TEST_DIR_AP/node_modules/pkg"
+      
           echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
           echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
           echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
+      
           echo "Workspace tree:"
           find "$TEST_DIR_WS" -type f -print | sort
           echo "Action path tree:"
           find "$TEST_DIR_AP" -type f -print | sort
+      
           cat > ./check-exclude-node-modules.mjs <<'EOF_NODE'
           import { writeFileSync } from 'fs';
+      
           const glob = await import('./packages/glob/lib/glob.js');
+      
           const ws = process.env.GITHUB_WORKSPACE;
           const ap = process.env.GITHUB_ACTION_PATH;
-          // Scope patterns to our test dir to avoid hashing the whole repository.
+      
+          if (!ws) throw new Error('GITHUB_WORKSPACE is not set');
+          if (!ap) throw new Error('GITHUB_ACTION_PATH is not set');
+      
+          // Scope patterns to our test dirs (workspace + action path).
           const patterns = [
             `${ws}/hashfiles-exclude-nm/**/*.json`,
             `${ap}/hashfiles-exclude-nm/**/*.json`
           ].join('\n');
-          // Keep the same *options structure* you requested (exclude contains **/node_modules/**)
+      
           const opts = {
             roots: [ws, ap],
             allowFilesOutsideWorkspace: true,
             exclude: ['**/node_modules/**']
           };
+      
           const h1 = await glob.hashFiles(patterns, '', opts);
           console.log('h1:', JSON.stringify(h1));
-          // Mutate a JSON file under node_modules; if exclude works as a real glob, hash should NOT change.
-          const nmFile = `${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`;
-          writeFileSync(nmFile, '{"where":"workspace-node_modules","v":2}\n');
+      
+          // Mutate workspace node_modules file; hash should NOT change.
+          writeFileSync(`${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`, '{"v":2}\n');
           const h2 = await glob.hashFiles(patterns, '', opts);
           console.log('h2:', JSON.stringify(h2));
-          if (h1 !== h2) {
+      
+          // Mutate action-path node_modules file; hash should NOT change.
+          writeFileSync(`${ap}/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json`, '{"v":3}\n');
+          const h3 = await glob.hashFiles(patterns, '', opts);
+          console.log('h3:', JSON.stringify(h3));
+      
+          if (h1 !== h2 || h1 !== h3) {
             throw new Error(
               "Hash changed after modifying a node_modules JSON file; exclude:['**/node_modules/**'] did not exclude it (or exclude doesn't support full globs)."
             );
           }
+      
           console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
           EOF_NODE
+      
           node ./check-exclude-node-modules.mjs
+                EOF_NODE
+                node ./check-exclude-node-modules.mjs
