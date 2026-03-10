@@ -6,7 +6,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout toolkit (main)
         uses: actions/checkout@v4
@@ -15,7 +14,6 @@ jobs:
           ref: hashFiles-extended-options
           path: toolkit
           fetch-depth: 0
-
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -28,74 +26,77 @@ jobs:
         working-directory: toolkit
         run: npm ci
 
+      - name: Build (generate packages/**/lib outputs)
+        working-directory: toolkit
+        run: npm run build
+
       - name: Functional check exclude **/node_modules/** (scoped + deterministic)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
-      
+
           echo "PWD=$(pwd)"
-          ls -la
           echo "Checking glob build output exists..."
-          ls -la packages/glob || true
-          ls -la packages/glob/lib || true
+          ls -la packages/glob
+          ls -la packages/glob/lib
           test -f packages/glob/lib/glob.js
-      
+
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "GITHUB_ACTION_PATH=${GITHUB_ACTION_PATH:-"(not set)"}"
           if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
             export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
           fi
-      
+
           TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-nm"
           TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-nm"
           rm -rf "$TEST_DIR_WS" "$TEST_DIR_AP"
           mkdir -p "$TEST_DIR_WS/node_modules/pkg" "$TEST_DIR_WS/src" "$TEST_DIR_AP/node_modules/pkg"
-      
+
           echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
           echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
           echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
-      
+
           python - <<'PY'
           content = r"""import { writeFileSync } from 'fs';
-      
+
           const glob = await import('./packages/glob/lib/glob.js');
-      
+
           const ws = process.env.GITHUB_WORKSPACE;
           const ap = process.env.GITHUB_ACTION_PATH;
-      
+
           if (!ws) throw new Error('GITHUB_WORKSPACE is not set');
           if (!ap) throw new Error('GITHUB_ACTION_PATH is not set');
-      
+
           const patterns = [
             `${ws}/hashfiles-exclude-nm/**/*.json`,
             `${ap}/hashfiles-exclude-nm/**/*.json`
           ].join('\n');
-      
+
           const opts = {
             roots: [ws, ap],
             allowFilesOutsideWorkspace: true,
             exclude: ['**/node_modules/**']
           };
-      
+
           const h1 = await glob.hashFiles(patterns, '', opts);
           console.log('h1:', JSON.stringify(h1));
-      
-          writeFileSync(`${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`, '{"v":2}\n');
+
+          writeFileSync(`${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`, '{"v":2}\\n');
           const h2 = await glob.hashFiles(patterns, '', opts);
           console.log('h2:', JSON.stringify(h2));
-      
-          writeFileSync(`${ap}/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json`, '{"v":3}\n');
+
+          writeFileSync(`${ap}/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json`, '{"v":3}\\n');
           const h3 = await glob.hashFiles(patterns, '', opts);
           console.log('h3:', JSON.stringify(h3));
-      
+
           if (h1 !== h2 || h1 !== h3) {
             throw new Error("exclude:['**/node_modules/**'] failed; hash changed after modifying node_modules file.");
           }
-      
+
           console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
           """
           open("check-exclude-node-modules.mjs", "w", encoding="utf-8").write(content)
           PY
-      
+
           node ./check-exclude-node-modules.mjs
