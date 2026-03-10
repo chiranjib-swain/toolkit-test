@@ -33,6 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+      
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "Checking glob build output exists..."
+          ls -la packages/glob || true
+          ls -la packages/glob/lib || true
+          test -f packages/glob/lib/glob.js
+      
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "GITHUB_ACTION_PATH=${GITHUB_ACTION_PATH:-"(not set)"}"
           if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
@@ -47,11 +55,6 @@ jobs:
           echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
           echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
           echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
-      
-          echo "Workspace tree:"
-          find "$TEST_DIR_WS" -type f -print | sort
-          echo "Action path tree:"
-          find "$TEST_DIR_AP" -type f -print | sort
       
           python - <<'PY'
           content = r"""import { writeFileSync } from 'fs';
