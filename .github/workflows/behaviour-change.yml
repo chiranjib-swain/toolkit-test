@@ -65,7 +65,7 @@ jobs:
           echo "Action path tree:"
           find "$TEST_DIR_AP" -type f -print | sort
       
-          cat > ./check-exclude-node-modules.mjs <<'EOF_NODE'
+          cat > ./check-exclude-node-modules.mjs <<'EOF'
           import { writeFileSync } from 'fs';
       
           const glob = await import('./packages/glob/lib/glob.js');
@@ -76,7 +76,6 @@ jobs:
           if (!ws) throw new Error('GITHUB_WORKSPACE is not set');
           if (!ap) throw new Error('GITHUB_ACTION_PATH is not set');
       
-          // Scope patterns to our test dirs (workspace + action path).
           const patterns = [
             `${ws}/hashfiles-exclude-nm/**/*.json`,
             `${ap}/hashfiles-exclude-nm/**/*.json`
@@ -91,24 +90,22 @@ jobs:
           const h1 = await glob.hashFiles(patterns, '', opts);
           console.log('h1:', JSON.stringify(h1));
       
-          // Mutate workspace node_modules file; hash should NOT change.
           writeFileSync(`${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`, '{"v":2}\n');
           const h2 = await glob.hashFiles(patterns, '', opts);
           console.log('h2:', JSON.stringify(h2));
       
-          // Mutate action-path node_modules file; hash should NOT change.
           writeFileSync(`${ap}/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json`, '{"v":3}\n');
           const h3 = await glob.hashFiles(patterns, '', opts);
           console.log('h3:', JSON.stringify(h3));
       
           if (h1 !== h2 || h1 !== h3) {
-            throw new Error(
-              "Hash changed after modifying a node_modules JSON file; exclude:['**/node_modules/**'] did not exclude it (or exclude doesn't support full globs)."
-            );
+            throw new Error("exclude:['**/node_modules/**'] failed; hash changed after modifying node_modules file.");
           }
       
           console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
-          EOF_NODE
+          EOF
+      
+          node ./check-exclude-node-modules.mjs
       
           node ./check-exclude-node-modules.mjs
                 EOF_NODE
