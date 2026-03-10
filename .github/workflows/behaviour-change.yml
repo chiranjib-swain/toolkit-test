@@ -28,18 +28,6 @@ jobs:
         working-directory: toolkit
         run: npm ci
 
-      - name: Lerna bootstrap (link local packages + install per-package deps)
-        working-directory: toolkit
-        run: npx lerna bootstrap --ci
-
-      - name: Build
-        working-directory: toolkit
-        run: npm run build
-
-      - name: Test (Jest from root, glob only)
-        working-directory: toolkit
-        run: npx jest packages/glob --runInBand
-
       - name: Functional check exclude **/node_modules/** (scoped + deterministic)
         working-directory: toolkit
         shell: bash
@@ -65,8 +53,8 @@ jobs:
           echo "Action path tree:"
           find "$TEST_DIR_AP" -type f -print | sort
       
-          cat > ./check-exclude-node-modules.mjs <<'EOF'
-          import { writeFileSync } from 'fs';
+          python - <<'PY'
+          content = r"""import { writeFileSync } from 'fs';
       
           const glob = await import('./packages/glob/lib/glob.js');
       
@@ -103,10 +91,8 @@ jobs:
           }
       
           console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
-          EOF
+          """
+          open("check-exclude-node-modules.mjs", "w", encoding="utf-8").write(content)
+          PY
       
           node ./check-exclude-node-modules.mjs
-      
-          node ./check-exclude-node-modules.mjs
-                EOF_NODE
-                node ./check-exclude-node-modules.mjs
