@@ -26,6 +26,10 @@ jobs:
         working-directory: toolkit
         run: npm ci
 
+      - name: Bootstrap (link lerna packages)
+        working-directory: toolkit
+        run: npx lerna bootstrap
+
       - name: Build (generate packages/**/lib outputs)
         working-directory: toolkit
         run: npm run build
