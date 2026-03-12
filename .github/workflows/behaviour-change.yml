@@ -34,73 +34,99 @@ jobs:
         working-directory: toolkit
         run: npm run build
 
-      - name: Functional check exclude **/node_modules/** (scoped + deterministic)
+      - name: Functional check exclude patterns (node_modules, logs, dist)
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
-
           echo "PWD=$(pwd)"
+      
           echo "Checking glob build output exists..."
           ls -la packages/glob
           ls -la packages/glob/lib
           test -f packages/glob/lib/glob.js
-
+      
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "GITHUB_ACTION_PATH=${GITHUB_ACTION_PATH:-"(not set)"}"
+      
           if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
             export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
           fi
-
-          TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-nm"
-          TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-nm"
+      
+          TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-test"
+          TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-test"
+      
           rm -rf "$TEST_DIR_WS" "$TEST_DIR_AP"
-          mkdir -p "$TEST_DIR_WS/node_modules/pkg" "$TEST_DIR_WS/src" "$TEST_DIR_AP/node_modules/pkg"
-
+      
+          mkdir -p \
+            "$TEST_DIR_WS/node_modules/pkg" \
+            "$TEST_DIR_WS/src" \
+            "$TEST_DIR_WS/dist" \
+            "$TEST_DIR_AP/node_modules/pkg" \
+            "$TEST_DIR_AP/dist"
+      
           echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
+      
           echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
+          echo '{"where":"workspace-dist"}' > "$TEST_DIR_WS/dist/excluded.json"
+          echo 'log entry' > "$TEST_DIR_WS/src/test.log"
+      
           echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
-
+          echo '{"where":"action-dist"}' > "$TEST_DIR_AP/dist/excluded-action.json"
+          echo 'action log entry' > "$TEST_DIR_AP/test.log"
+      
           python - <<'PY'
+          from pathlib import Path
+      
           content = r"""import { writeFileSync } from 'fs';
-
           const glob = await import('./packages/glob/lib/glob.js');
-
+      
           const ws = process.env.GITHUB_WORKSPACE;
           const ap = process.env.GITHUB_ACTION_PATH;
-
+      
           if (!ws) throw new Error('GITHUB_WORKSPACE is not set');
           if (!ap) throw new Error('GITHUB_ACTION_PATH is not set');
-
+      
           const patterns = [
-            `${ws}/hashfiles-exclude-nm/**/*.json`,
-            `${ap}/hashfiles-exclude-nm/**/*.json`
+            `${ws}/hashfiles-exclude-test/**/*`,
+            `${ap}/hashfiles-exclude-test/**/*`
           ].join('\n');
-
+      
           const opts = {
             roots: [ws, ap],
             allowFilesOutsideWorkspace: true,
-            exclude: ['**/node_modules/**']
+            exclude: [
+              '**/node_modules/**',
+              '**/*.log',
+              'dist/**'
+            ]
           };
-
+      
           const h1 = await glob.hashFiles(patterns, '', opts);
           console.log('h1:', JSON.stringify(h1));
-
-          writeFileSync(`${ws}/hashfiles-exclude-nm/node_modules/pkg/excluded.json`, '{"v":2}\\n');
+      
+          // modify excluded files
+          writeFileSync(`${ws}/hashfiles-exclude-test/node_modules/pkg/excluded.json`, '{"v":2}\n');
+          writeFileSync(`${ws}/hashfiles-exclude-test/src/test.log`, 'changed\n');
+          writeFileSync(`${ws}/hashfiles-exclude-test/dist/excluded.json`, '{"v":3}\n');
+      
           const h2 = await glob.hashFiles(patterns, '', opts);
           console.log('h2:', JSON.stringify(h2));
-
-          writeFileSync(`${ap}/hashfiles-exclude-nm/node_modules/pkg/excluded-action.json`, '{"v":3}\\n');
+      
+          writeFileSync(`${ap}/hashfiles-exclude-test/node_modules/pkg/excluded-action.json`, '{"v":4}\n');
+          writeFileSync(`${ap}/hashfiles-exclude-test/test.log`, 'changed-action\n');
+          writeFileSync(`${ap}/hashfiles-exclude-test/dist/excluded-action.json`, '{"v":5}\n');
+      
           const h3 = await glob.hashFiles(patterns, '', opts);
           console.log('h3:', JSON.stringify(h3));
-
+      
           if (h1 !== h2 || h1 !== h3) {
-            throw new Error("exclude:['**/node_modules/**'] failed; hash changed after modifying node_modules file.");
+            throw new Error("Exclude patterns failed; hash changed after modifying excluded files.");
           }
-
-          console.log("OK: exclude:['**/node_modules/**'] prevented node_modules changes from affecting the hash.");
+      
+          console.log("OK: exclude patterns (**/node_modules/**, **/*.log, dist/**) prevented excluded changes from affecting the hash.");
           """
-          open("check-exclude-node-modules.mjs", "w", encoding="utf-8").write(content)
+          Path("check-exclude-patterns.mjs").write_text(content, encoding="utf-8")
           PY
-
-          node ./check-exclude-node-modules.mjs
+      
+          node ./check-exclude-patterns.mjs
