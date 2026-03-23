@@ -217,7 +217,7 @@ jobs:
           // ----------------------------------------
           {
             const patterns = [
-              `${ws}/hashfiles-exclude-symlink/real/**/*.*`,
+              `${ws}/hashfiles-exclude-symlink/real/src/included.json`,
               `${ws}/hashfiles-exclude-symlink/link_node_modules/**/*.*`
             ].join('\\n');
       
