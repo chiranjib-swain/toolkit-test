@@ -40,51 +40,222 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-     # Title: Negative functional check for isInResolvedRoots (outside root is skipped unless allowFilesOutsideWorkspace=true)
+    # Title: Functional cross-check for exclude + matcher compilation + symlink-safety (node_modules, dist, *.log)
 
-      - name: Functional check isInResolvedRoots negative (outside root skipped unless allowFilesOutsideWorkspace=true)
+      - name: Functional cross-check exclude patterns (node_modules, dist, *.log) + included-file change + basename-only + symlink
         working-directory: toolkit
         shell: bash
         run: |
           set -euo pipefail
+          echo "PWD=$(pwd)"
       
-          mkdir -p "$RUNNER_TEMP/hashfiles-root-negative/allowed-root"
-          mkdir -p "$RUNNER_TEMP/hashfiles-root-negative/outside-root"
+          echo "Checking glob build output exists..."
+          ls -la packages/glob
+          ls -la packages/glob/lib
+          test -f packages/glob/lib/glob.js
       
-          echo "ALLOWED" > "$RUNNER_TEMP/hashfiles-root-negative/allowed-root/allowed.txt"
-          echo "OUTSIDE" > "$RUNNER_TEMP/hashfiles-root-negative/outside-root/outside.txt"
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "GITHUB_ACTION_PATH=${GITHUB_ACTION_PATH:-"(not set)"}"
+          if [[ -z "${GITHUB_ACTION_PATH:-}" ]]; then
+            export GITHUB_ACTION_PATH="$RUNNER_TEMP/fake-action-path"
+          fi
       
-          cat > ./check-root-negative.mjs <<'EOF'
+          # -----------------------------
+          # Test 1: Exclude patterns across workspace + action path
+          #   - ensure excluded files don't change hash
+          #   - ensure included file DOES change hash (anti-false-positive)
+          # -----------------------------
+          TEST_DIR_WS="$GITHUB_WORKSPACE/hashfiles-exclude-test"
+          TEST_DIR_AP="$GITHUB_ACTION_PATH/hashfiles-exclude-test"
+          rm -rf "$TEST_DIR_WS" "$TEST_DIR_AP"
+          mkdir -p \
+            "$TEST_DIR_WS/node_modules/pkg" \
+            "$TEST_DIR_WS/src" \
+            "$TEST_DIR_WS/dist" \
+            "$TEST_DIR_AP/node_modules/pkg" \
+            "$TEST_DIR_AP/dist"
+      
+          echo '{"where":"workspace-src"}' > "$TEST_DIR_WS/src/included.json"
+      
+          echo '{"where":"workspace-node_modules"}' > "$TEST_DIR_WS/node_modules/pkg/excluded.json"
+          echo '{"where":"workspace-dist"}' > "$TEST_DIR_WS/dist/excluded.json"
+          echo 'log entry' > "$TEST_DIR_WS/src/test.log"
+      
+          echo '{"where":"action-node_modules"}' > "$TEST_DIR_AP/node_modules/pkg/excluded-action.json"
+          echo '{"where":"action-dist"}' > "$TEST_DIR_AP/dist/excluded-action.json"
+          echo 'action log entry' > "$TEST_DIR_AP/test.log"
+      
+          # -----------------------------
+          # Test 2: Basename-only exclude (*.log) should match anywhere
+          # -----------------------------
+          BASE_DIR="$GITHUB_WORKSPACE/hashfiles-exclude-basename"
+          rm -rf "$BASE_DIR"
+          mkdir -p "$BASE_DIR/a/b/c" "$BASE_DIR/src"
+          echo "INCLUDED" > "$BASE_DIR/src/included.txt"
+          echo "LOG1" > "$BASE_DIR/a/test.log"
+          echo "LOG2" > "$BASE_DIR/a/b/c/inner.log"
+      
+          # -----------------------------
+          # Test 3: Symlink-safe exclude (exclude should apply based on resolved realpath)
+          # -----------------------------
+          SYM_BASE="$GITHUB_WORKSPACE/hashfiles-exclude-symlink"
+          rm -rf "$SYM_BASE"
+          mkdir -p "$SYM_BASE/real/node_modules/pkg" "$SYM_BASE/real/src"
+          echo '{"where":"real-src"}' > "$SYM_BASE/real/src/included.json"
+          echo '{"where":"real-node_modules"}' > "$SYM_BASE/real/node_modules/pkg/excluded.json"
+      
+          # Create a symlink that points to the real node_modules directory.
+          # We'll pattern-match through the symlink path, but exclude should still work
+          # because hashFiles resolves file realpaths before applying exclude.
+          ln -s "$SYM_BASE/real/node_modules" "$SYM_BASE/link_node_modules"
+      
+          python - <<'PY'
+          from pathlib import Path
+      
+          content = r"""import { writeFileSync } from 'fs';
+          import * as fs from 'fs';
+          import * as path from 'path';
+      
           const glob = await import('./packages/glob/lib/glob.js');
-          const fs = await import('fs');
       
-          const base = process.env.RUNNER_TEMP + '/hashfiles-root-negative';
-          const allowedRoot = base + '/allowed-root';
-          const outsideFile = base + '/outside-root/outside.txt';
+          const ws = process.env.GITHUB_WORKSPACE;
+          const ap = process.env.GITHUB_ACTION_PATH;
       
-          const patterns = outsideFile;
-          const roots = [allowedRoot];
+          if (!ws) throw new Error('GITHUB_WORKSPACE is not set');
+          if (!ap) throw new Error('GITHUB_ACTION_PATH is not set');
       
-          console.log('patterns:', JSON.stringify(patterns));
-          console.log('roots:', JSON.stringify(roots));
-          console.log('resolvedOutsideFile:', fs.realpathSync(outsideFile));
-          console.log('resolvedRoots:', JSON.stringify(roots.map(r => fs.realpathSync(r))));
-      
-          // Case 1: allowFilesOutsideWorkspace=false (default). File is outside roots => should be skipped => empty hash.
-          const h1 = await glob.hashFiles(patterns, '', { roots, allowFilesOutsideWorkspace: false }, true);
-          console.log('h1 (allowOutside=false):', JSON.stringify(h1));
-          if (h1 !== '') {
-            throw new Error('Expected empty hash when file is outside roots and allowFilesOutsideWorkspace=false.');
+          function assert(cond, msg) {
+            if (!cond) throw new Error(msg);
           }
       
-          // Case 2: allowFilesOutsideWorkspace=true. Outside file should be INCLUDED => non-empty hash.
-          const h2 = await glob.hashFiles(patterns, '', { roots, allowFilesOutsideWorkspace: true }, true);
-          console.log('h2 (allowOutside=true):', JSON.stringify(h2));
-          if (!h2) {
-            throw new Error('Expected non-empty hash when file is outside roots and allowFilesOutsideWorkspace=true.');
+          // ----------------------------------------
+          // Test 1: node_modules/dist/**/*.log exclude across workspace + action path
+          // ----------------------------------------
+          {
+            const patterns = [
+              `${ws}/hashfiles-exclude-test/**/*`,
+              `${ap}/hashfiles-exclude-test/**/*`
+            ].join('\\n');
+      
+            const opts = {
+              roots: [ws, ap],
+              allowFilesOutsideWorkspace: true,
+              exclude: ['**/node_modules/**', '**/*.log', '**/dist/**']
+            };
+      
+            const h1 = await glob.hashFiles(patterns, '', opts);
+            console.log('T1 h1:', JSON.stringify(h1));
+            assert(h1, 'T1 expected non-empty hash at baseline');
+      
+            // Modify excluded files (workspace)
+            writeFileSync(`${ws}/hashfiles-exclude-test/node_modules/pkg/excluded.json`, '{"v":2}\\n');
+            writeFileSync(`${ws}/hashfiles-exclude-test/src/test.log`, 'changed\\n');
+            writeFileSync(`${ws}/hashfiles-exclude-test/dist/excluded.json`, '{"v":3}\\n');
+      
+            const h2 = await glob.hashFiles(patterns, '', opts);
+            console.log('T1 h2:', JSON.stringify(h2));
+      
+            // Modify excluded files (action path)
+            writeFileSync(`${ap}/hashfiles-exclude-test/node_modules/pkg/excluded-action.json`, '{"v":4}\\n');
+            writeFileSync(`${ap}/hashfiles-exclude-test/test.log`, 'changed-action\\n');
+            writeFileSync(`${ap}/hashfiles-exclude-test/dist/excluded-action.json`, '{"v":5}\\n');
+      
+            const h3 = await glob.hashFiles(patterns, '', opts);
+            console.log('T1 h3:', JSON.stringify(h3));
+      
+            assert(h1 === h2 && h1 === h3,
+              'T1 exclude failed: hash changed after modifying excluded files');
+      
+            // Now modify INCLUDED file: hash MUST change.
+            writeFileSync(`${ws}/hashfiles-exclude-test/src/included.json`,
+              '{"where":"workspace-src","v":2}\\n');
+            const h4 = await glob.hashFiles(patterns, '', opts);
+            console.log('T1 h4 (included changed):', JSON.stringify(h4));
+      
+            assert(h4 && h4 !== h1,
+              'T1 expected hash to change after modifying included.json');
+      
+            console.log('T1 OK');
           }
       
-          console.log('OK: outside-root file is skipped by default, but included when allowFilesOutsideWorkspace=true.');
-          EOF
+          // ----------------------------------------
+          // Test 2: basename-only exclude "*.log" should match anywhere
+          // ----------------------------------------
+          {
+            const patterns = `${ws}/hashfiles-exclude-basename/**/*`;
+            const opts = {
+              roots: [ws],
+              allowFilesOutsideWorkspace: true,
+              exclude: ['*.log']
+            };
       
-          node ./check-root-negative.mjs
+            const h1 = await glob.hashFiles(patterns, '', opts);
+            console.log('T2 h1:', JSON.stringify(h1));
+            assert(h1, 'T2 expected non-empty hash at baseline');
+      
+            writeFileSync(`${ws}/hashfiles-exclude-basename/a/test.log`, 'CHANGED\\n');
+            writeFileSync(`${ws}/hashfiles-exclude-basename/a/b/c/inner.log`, 'CHANGED2\\n');
+      
+            const h2 = await glob.hashFiles(patterns, '', opts);
+            console.log('T2 h2:', JSON.stringify(h2));
+            assert(h2 === h1, "T2 exclude ['*.log'] failed: hash changed after modifying .log files");
+      
+            // Included file must change the hash
+            writeFileSync(`${ws}/hashfiles-exclude-basename/src/included.txt`, 'CHANGED-INCLUDED\\n');
+            const h3 = await glob.hashFiles(patterns, '', opts);
+            console.log('T2 h3 (included changed):', JSON.stringify(h3));
+            assert(h3 && h3 !== h1,
+              'T2 expected hash to change after modifying included.txt');
+      
+            console.log('T2 OK');
+          }
+      
+          // ----------------------------------------
+          // Test 3: symlink-safe exclude (exclude based on resolved realpath)
+          // - patterns include files through the symlink path
+          // - exclude '**/node_modules/**' must still exclude the target under real/node_modules
+          // ----------------------------------------
+          {
+            const patterns = [
+              `${ws}/hashfiles-exclude-symlink/real/**/*`,
+              `${ws}/hashfiles-exclude-symlink/link_node_modules/**/*`
+            ].join('\\n');
+      
+            const opts = {
+              roots: [ws],
+              allowFilesOutsideWorkspace: true,
+              exclude: ['**/node_modules/**']
+            };
+      
+            // sanity: show what the symlink points to
+            const linkPath = `${ws}/hashfiles-exclude-symlink/link_node_modules`;
+            const linkTarget = fs.realpathSync(linkPath);
+            console.log('T3 symlink realpath:', JSON.stringify({ linkPath, linkTarget }));
+      
+            const h1 = await glob.hashFiles(patterns, '', opts);
+            console.log('T3 h1:', JSON.stringify(h1));
+            assert(h1, 'T3 expected non-empty hash at baseline');
+      
+            // Modify node_modules file in the real target; hash should NOT change
+            writeFileSync(`${ws}/hashfiles-exclude-symlink/real/node_modules/pkg/excluded.json`, '{"v":2}\\n');
+            const h2 = await glob.hashFiles(patterns, '', opts);
+            console.log('T3 h2:', JSON.stringify(h2));
+            assert(h2 === h1,
+              "T3 exclude '**/node_modules/**' failed: hash changed after modifying node_modules file");
+      
+            // Modify included file; hash MUST change
+            writeFileSync(`${ws}/hashfiles-exclude-symlink/real/src/included.json`, '{"where":"real-src","v":2}\\n');
+            const h3 = await glob.hashFiles(patterns, '', opts);
+            console.log('T3 h3 (included changed):', JSON.stringify(h3));
+            assert(h3 && h3 !== h1,
+              'T3 expected hash to change after modifying included.json');
+      
+            console.log('T3 OK');
+          }
+      
+          console.log('ALL OK: exclude semantics, basename matchBase, and symlink-safe behavior verified.');
+          """
+          Path("check-exclude-crosscheck-all.mjs").write_text(content, encoding="utf-8")
+          PY
+      
+          node ./check-exclude-crosscheck-all.mjs
