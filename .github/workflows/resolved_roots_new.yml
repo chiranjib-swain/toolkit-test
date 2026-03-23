@@ -1,0 +1,77 @@
+name: New Resolved Roots
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout toolkit (main)
+        uses: actions/checkout@v4
+        with:
+          repository: priyagupta108/toolkit
+          ref: hashFiles-extended-options
+          path: toolkit
+          fetch-depth: 0
+
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: toolkit/package-lock.json
+
+      - name: Install root dependencies
+        working-directory: toolkit
+        run: npm ci
+
+      - name: Lerna bootstrap (link local packages + install per-package deps)
+        working-directory: toolkit
+        run: npx lerna bootstrap --ci
+
+      - name: Build
+        working-directory: toolkit
+        run: npm run build
+
+      - name: Test (Jest from root, glob only)
+        working-directory: toolkit
+        run: npx jest packages/glob --runInBand
+
+      - name: Functional check isInResolvedRoots edge case (resolvedFile === root)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+      
+          mkdir -p "$RUNNER_TEMP/hashfiles-root-eq"
+          echo "ROOTFILE" > "$RUNNER_TEMP/hashfiles-root-eq/rootfile.txt"
+      
+          cat > ./check-root-eq.mjs <<'EOF'
+          const glob = await import('./packages/glob/lib/glob.js');
+          const fs = await import('fs');
+      
+          const fileAtRoot = process.env.RUNNER_TEMP + '/hashfiles-root-eq/rootfile.txt';
+      
+          const patterns = fileAtRoot;
+          const roots = [fileAtRoot];
+      
+          console.log('patterns:', JSON.stringify(patterns));
+          console.log('roots:', JSON.stringify(roots));
+          console.log('resolvedFile:', fs.realpathSync(fileAtRoot));
+          console.log('resolvedRoots:', JSON.stringify(roots.map(r => fs.realpathSync(r))));
+      
+          // With the updated isInResolvedRoots logic, resolvedFile === root MUST be treated as inside.
+          const h = await glob.hashFiles(patterns, '', { roots });
+          console.log('hash:', JSON.stringify(h));
+      
+          if (!h) {
+            throw new Error('Expected a non-empty hash when hashing a file that equals the root path.');
+          }
+      
+          console.log('OK: resolvedFile === root is treated as inside allowed roots.');
+          EOF
+      
+          node ./check-root-eq.mjs
