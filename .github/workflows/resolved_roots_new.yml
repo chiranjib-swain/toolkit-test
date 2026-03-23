@@ -40,6 +40,8 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
+     # Title: Functional checks for isInResolvedRoots edge cases (root equality + directory containment)
+
       - name: Functional check isInResolvedRoots edge case (resolvedFile === root)
         working-directory: toolkit
         shell: bash
@@ -63,7 +65,7 @@ jobs:
           console.log('resolvedFile:', fs.realpathSync(fileAtRoot));
           console.log('resolvedRoots:', JSON.stringify(roots.map(r => fs.realpathSync(r))));
       
-          // With the updated isInResolvedRoots logic, resolvedFile === root MUST be treated as inside.
+          // New behavior: resolvedFile === root is treated as inside allowed roots.
           const h = await glob.hashFiles(patterns, '', { roots });
           console.log('hash:', JSON.stringify(h));
       
@@ -75,3 +77,41 @@ jobs:
           EOF
       
           node ./check-root-eq.mjs
+      
+      
+      - name: Functional check isInResolvedRoots directory containment (file under root dir)
+        working-directory: toolkit
+        shell: bash
+        run: |
+          set -euo pipefail
+      
+          mkdir -p "$RUNNER_TEMP/hashfiles-root-dir"
+          echo "CHILD" > "$RUNNER_TEMP/hashfiles-root-dir/child.txt"
+      
+          cat > ./check-root-dir.mjs <<'EOF'
+          const glob = await import('./packages/glob/lib/glob.js');
+          const fs = await import('fs');
+      
+          const dirRoot = process.env.RUNNER_TEMP + '/hashfiles-root-dir';
+          const childFile = dirRoot + '/child.txt';
+      
+          const patterns = childFile;
+          const roots = [dirRoot];
+      
+          console.log('patterns:', JSON.stringify(patterns));
+          console.log('roots:', JSON.stringify(roots));
+          console.log('resolvedFile:', fs.realpathSync(childFile));
+          console.log('resolvedRoots:', JSON.stringify(roots.map(r => fs.realpathSync(r))));
+      
+          // File is inside the directory root; hashing should succeed.
+          const h = await glob.hashFiles(patterns, '', { roots });
+          console.log('hash:', JSON.stringify(h));
+      
+          if (!h) {
+            throw new Error('Expected a non-empty hash when hashing a file under the root directory.');
+          }
+      
+          console.log('OK: file under root directory is treated as inside allowed roots.');
+          EOF
+      
+          node ./check-root-dir.mjs
