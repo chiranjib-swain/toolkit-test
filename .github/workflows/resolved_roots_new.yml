@@ -40,7 +40,7 @@ jobs:
         working-directory: toolkit
         run: npx jest packages/glob --runInBand
 
-    # Title: Functional cross-check for exclude + matcher compilation + symlink-safety (node_modules, dist, *.log)
+   # Title: Functional cross-check for exclude + matcher compilation + symlink-safety (node_modules, dist, *.log)
 
       - name: Functional cross-check exclude patterns (node_modules, dist, *.log) + included-file change + basename-only + symlink
         working-directory: toolkit
