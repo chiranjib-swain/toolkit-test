@@ -133,14 +133,14 @@ jobs:
           // ----------------------------------------
           {
             const patterns = [
-              `${ws}/hashfiles-exclude-test/**/*.*`,
-              `${ap}/hashfiles-exclude-test/**/*.*`
-            ].join('\\n');
+                `${ws}/hashfiles-exclude-test/**/*.json`,
+                `${ap}/hashfiles-exclude-test/**/*.json`
+              ].join('\n');
       
             const opts = {
               roots: [ws, ap],
               allowFilesOutsideWorkspace: true,
-              exclude: ['**/node_modules/**', '**/*.log', '**/dist/**']
+              exclude: ['**/node_modules/**', '**/dist/**']
             };
       
             const h1 = await glob.hashFiles(patterns, '', opts);
